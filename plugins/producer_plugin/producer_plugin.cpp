@@ -84,7 +84,7 @@ using transaction_id_with_expiry_index = multi_index_container<
 
 enum class pending_block_mode {
    producing,
-   speculating
+   speculating //推测
 };
 #define CATCH_AND_CALL(NEXT)\
    catch ( const fc::exception& err ) {\
@@ -143,7 +143,7 @@ class producer_plugin_impl : public std::enable_shared_from_this<producer_plugin
       producer_plugin* _self = nullptr;
 
       incoming::channels::block::channel_type::handle         _incoming_block_subscription;
-      incoming::channels::transaction::channel_type::handle   _incoming_transaction_subscription;
+      incoming::channels::transaction::channel_type::handle   _incoming_transaction_subscription; //a method () = signal(Args...)
 
       compat::channels::transaction_ack::channel_type&        _transaction_ack_channel;
 
@@ -164,6 +164,11 @@ class producer_plugin_impl : public std::enable_shared_from_this<producer_plugin
        * they must check that correlation_id against the global ordinal.  If it does not match that
        * implies that this method has been called with the handler in the state where it should be
        * cancelled but wasn't able to be.
+       *
+       * boost计时器可以处于尚未执行但不可中止的处理程序的状态。
+         由于此方法需要改变状态处理程序依赖于正确运行以维护其他代码的不变量（即接受几乎完整块中的传入事务），
+         处理程序在设置它们时捕获核心ID。 当它们被执行时，它们必须检查针对全局序数的correlation_id。
+         如果它不匹配意味着已经使用处理程序调用此方法，该处理程序处于应该被取消但不能被取消的状态。
        */
       uint32_t _timer_corelation_id = 0;
 
@@ -216,7 +221,9 @@ class producer_plugin_impl : public std::enable_shared_from_this<producer_plugin
          auto new_bs = bsp->generate_next(new_block_header.timestamp);
 
          // for newly installed producers we can set their watermarks to the block they became active
-         if (new_bs.maybe_promote_pending() && bsp->active_schedule.version != new_bs.active_schedule.version) {
+         // 生产者更新时更新watermark，此段从produce_block移到这里
+         // 提前更新下一个块的watermarks
+		 if (new_bs.maybe_promote_pending() && bsp->active_schedule.version != new_bs.active_schedule.version) {
             flat_set<account_name> new_producers;
             new_producers.reserve(new_bs.active_schedule.producers.size());
             for( const auto& p: new_bs.active_schedule.producers) {
@@ -277,6 +284,7 @@ class producer_plugin_impl : public std::enable_shared_from_this<producer_plugin
          }
       };
 
+      // net_plug::handle_message -> chain_plug::accept_block -(incoming_block_sync_method)-> this::on_incoming_block
       void on_incoming_block(const signed_block_ptr& block) {
          fc_dlog(_log, "received incoming block ${id}", ("id", block->id()));
 
@@ -291,7 +299,7 @@ class producer_plugin_impl : public std::enable_shared_from_this<producer_plugin
          if( existing ) { return; }
 
          // abort the pending block
-         chain.abort_block();
+         chain.abort_block(); // push uncommit_trx into unappield_transactions
 
          // exceptions throw out, make sure we restart our loop
          auto ensure = fc::make_scoped_exit([this](){
@@ -314,6 +322,7 @@ class producer_plugin_impl : public std::enable_shared_from_this<producer_plugin
          }
 
          if( except ) {
+            // 将发送错误block的peer的连接关闭...
             app().get_channel<channels::rejected_block>().publish( block );
             return;
          }
@@ -342,6 +351,7 @@ class producer_plugin_impl : public std::enable_shared_from_this<producer_plugin
 
          auto block_time = chain.pending_block_state()->header.timestamp.to_time_point();
 
+         //为什么要广播两次tx?
          auto send_response = [this, &trx, &next](const fc::static_variant<fc::exception_ptr, transaction_trace_ptr>& response) {
             next(response);
             if (response.contains<fc::exception_ptr>()) {
@@ -357,6 +367,7 @@ class producer_plugin_impl : public std::enable_shared_from_this<producer_plugin
             return;
          }
 
+         //没过期但是本地chain已经有的
          if( chain.is_known_unexpired_transaction(id) ) {
             send_response(std::static_pointer_cast<fc::exception>(std::make_shared<tx_duplicate>(FC_LOG_MESSAGE(error, "duplicate transaction ${id}", ("id", id)) )));
             return;
@@ -364,6 +375,8 @@ class producer_plugin_impl : public std::enable_shared_from_this<producer_plugin
 
          auto deadline = fc::time_point::now() + fc::milliseconds(_max_transaction_time_ms);
          bool deadline_is_subjective = false;
+
+         //deadline最久为block打包的时间
          if (_max_transaction_time_ms < 0 || (_pending_block_mode == pending_block_mode::producing && block_time < deadline) ) {
             deadline_is_subjective = true;
             deadline = block_time;
@@ -382,6 +395,7 @@ class producer_plugin_impl : public std::enable_shared_from_this<producer_plugin
                if (persist_until_expired) {
                   // if this trx didnt fail/soft-fail and the persist flag is set, store its ID so that we can
                   // ensure its applied to all future speculative blocks as well.
+                  // 没有失败就把trx持久化下来。
                   _persistent_transactions.insert(transaction_id_with_expiry{trx->id(), trx->expiration()});
                }
                send_response(trace);
@@ -412,7 +426,7 @@ class producer_plugin_impl : public std::enable_shared_from_this<producer_plugin
          succeeded,
          failed,
          waiting,
-         exhausted
+         exhausted //资源耗尽
       };
 
       start_block_result start_block(bool &last_block);
@@ -555,7 +569,9 @@ void producer_plugin::plugin_initialize(const boost::program_options::variables_
    LOAD_VALUE_SET(options, "producer-name", my->_producers, types::account_name)
 
    if( options.count("private-key") )
-   {
+   { /* 对应--private-key [\"EOS8...公钥\",\"5Hux...私钥y\"]
+      * 将private_key_type::sign(sha256)的函数指针放到 map[public_key]里
+      */
       const std::vector<std::string> key_id_to_wif_pair_strings = options["private-key"].as<std::vector<std::string>>();
       for (const std::string& key_id_to_wif_pair_string : key_id_to_wif_pair_strings)
       {
@@ -616,6 +632,7 @@ void producer_plugin::plugin_initialize(const boost::program_options::variables_
       } FC_LOG_AND_DROP();
    });
 
+   // bnet使用，not persist
    my->_incoming_transaction_subscription = app().get_channel<incoming::channels::transaction>().subscribe([this](const packed_transaction_ptr& trx){
       try {
          my->on_incoming_transaction_async(trx, false, [](const auto&){});
@@ -626,6 +643,7 @@ void producer_plugin::plugin_initialize(const boost::program_options::variables_
       my->on_incoming_block(block);
    });
 
+   // http请求使用，always persist
    my->_incoming_transaction_async_provider = app().get_method<incoming::methods::transaction_async>().register_provider([this](const packed_transaction_ptr& trx, bool persist_until_expired, next_function<transaction_trace_ptr> next) -> void {
       return my->on_incoming_transaction_async(trx, persist_until_expired, next );
    });
@@ -811,7 +829,7 @@ void producer_plugin::set_whitelist_blacklist(const producer_plugin::whitelist_b
 optional<fc::time_point> producer_plugin_impl::calculate_next_block_time(const account_name& producer_name, const block_timestamp_type& current_block_time) const {
    chain::controller& chain = app().get_plugin<chain_plugin>().chain();
    const auto& hbs = chain.head_block_state();
-   const auto& active_schedule = hbs->active_schedule.producers;
+   const auto& active_schedule = hbs->active_schedule.producers; //<producer_name, 公钥>们
 
    // determine if this producer is in the active schedule and if so, where
    auto itr = std::find_if(active_schedule.begin(), active_schedule.end(), [&](const auto& asp){ return asp.producer_name == producer_name; });
@@ -828,6 +846,7 @@ optional<fc::time_point> producer_plugin_impl::calculate_next_block_time(const a
    // disqualify this producer for longer but it is assumed they will wake up, determine that they
    // are disqualified for longer due to skipped blocks and re-caculate their next block with better
    // information then
+   // 至少到自己上次生产块的后一块
    auto current_watermark_itr = _producer_watermarks.find(producer_name);
    if (current_watermark_itr != _producer_watermarks.end()) {
       auto watermark = current_watermark_itr->second;
@@ -844,7 +863,7 @@ optional<fc::time_point> producer_plugin_impl::calculate_next_block_time(const a
    // this producers next opportuity to produce is the next time its slot arrives after or at the calculated minimum
    uint32_t minimum_slot = current_block_time.slot + minimum_offset;
    size_t minimum_slot_producer_index = (minimum_slot % (active_schedule.size() * config::producer_repetitions)) / config::producer_repetitions;
-   if ( producer_index == minimum_slot_producer_index ) {
+   if ( producer_index == minimum_slot_producer_index ) { // 我就是这个最小时间的生产者，直接等待minimum_slot
       // this is the producer for the minimum slot, go with that
       return block_timestamp_type(minimum_slot).to_time_point();
    } else {
@@ -856,9 +875,11 @@ optional<fc::time_point> producer_plugin_impl::calculate_next_block_time(const a
       }
 
       // align the minimum slot to the first of its set of reps
+      // 找到该生产者生产此轮生产第一个块的时间
       uint32_t first_minimum_producer_slot = minimum_slot - (minimum_slot % config::producer_repetitions);
 
       // offset the aligned minimum to the *earliest* next set of slots for this producer
+      // first_minimum_producer_slot + producer_distance个生产者生产的总时间就是我下次可以生产的时间
       uint32_t next_block_slot = first_minimum_producer_slot  + (producer_distance * config::producer_repetitions);
       return block_timestamp_type(next_block_slot).to_time_point();
    }
@@ -871,7 +892,7 @@ fc::time_point producer_plugin_impl::calculate_pending_block_time() const {
    const int64_t min_time_to_next_block = (config::block_interval_us) - (base.time_since_epoch().count() % (config::block_interval_us) );
    fc::time_point block_time = base + fc::microseconds(min_time_to_next_block);
 
-
+    // sleep 50microseconds微秒, 防止时间太少不够生产块
    if((block_time - now) < fc::microseconds(config::block_interval_us/10) ) {     // we must sleep for at least 50ms
       block_time += fc::microseconds(config::block_interval_us);
    }
@@ -1105,7 +1126,7 @@ producer_plugin_impl::start_block_result producer_plugin_impl::start_block(bool 
                _incoming_trx_weight += _incoming_defer_ratio;
                if (!orig_pending_txn_size) _incoming_trx_weight = 0.0;
             }
-         }
+         } ///scheduled transactions
 
          if (exhausted || block_time <= fc::time_point::now()) {
             return start_block_result::exhausted;
@@ -1132,6 +1153,11 @@ producer_plugin_impl::start_block_result producer_plugin_impl::start_block(bool 
    return start_block_result::failed;
 }
 
+/**
+ * plugin_startup -> schedule_production_loop
+ * on_incoming_block -> schedule_production_loop
+ * schedule_production_loop -> schedule_production_loop *3 at（failed, after producer, wake)
+ */
 void producer_plugin_impl::schedule_production_loop() {
    chain::controller& chain = app().get_plugin<chain_plugin>().chain();
    _timer.cancel();
@@ -1145,8 +1171,8 @@ void producer_plugin_impl::schedule_production_loop() {
       _timer.expires_from_now( boost::posix_time::microseconds( config::block_interval_us  / 10 ));
 
       // we failed to start a block, so try again later?
-      _timer.async_wait([weak_this,cid=++_timer_corelation_id](const boost::system::error_code& ec) {
-         auto self = weak_this.lock();
+      _timer.async_wait([weak_this,cid=++_timer_corelation_id /*自增_timer_corelation_id防止重复执行schedule_production_loop*/](const boost::system::error_code& ec) {
+         auto self = weak_this.lock(); //防止this引用被回收
          if (self && ec != boost::asio::error::operation_aborted && cid == self->_timer_corelation_id) {
             self->schedule_production_loop();
          }
@@ -1163,6 +1189,7 @@ void producer_plugin_impl::schedule_production_loop() {
    } else if (_pending_block_mode == pending_block_mode::producing) {
 
       // we succeeded but block may be exhausted
+	   // exhausted精疲力尽了就立即出块，否则可以继续接受tx直到block_time
       static const boost::posix_time::ptime epoch(boost::gregorian::date(1970, 1, 1));
       if (result == start_block_result::succeeded) {
          // ship this block off no later than its deadline
@@ -1197,6 +1224,7 @@ void producer_plugin_impl::schedule_production_loop() {
 
 void producer_plugin_impl::schedule_delayed_production_loop(const std::weak_ptr<producer_plugin_impl>& weak_this, const block_timestamp_type& current_block_time) {
    // if we have any producers then we should at least set a timer for our next available slot
+   // 找出本节点距离生产时间最近的producer，然后sleep直到生产时间
    optional<fc::time_point> wake_up_time;
    for (const auto&p: _producers) {
       auto next_producer_block_time = calculate_next_block_time(p, current_block_time);

@@ -216,7 +216,7 @@ struct controller_impl {
       EOS_ASSERT( log_head, block_log_exception, "block log head can not be found" );
       auto lh_block_num = log_head->block_num();
 
-      db.commit( s->block_num );
+      db.commit( s->block_num ); //根据revision commit所有multi_index
 
       if( s->block_num <= lh_block_num ) {
 //         edump((s->block_num)("double call to on_irr"));
@@ -241,7 +241,7 @@ struct controller_impl {
          fork_db.set_validity( s, true );
          head = s;
       }
-      emit( self.irreversible_block, s );
+      emit( self.irreversible_block, s ); //update _irreversible_block_time
    }
 
    void init() {
@@ -298,6 +298,7 @@ struct controller_impl {
       const auto& ubi = reversible_blocks.get_index<reversible_block_index,by_num>();
       auto objitr = ubi.rbegin();
       if( objitr != ubi.rend() ) {
+		 // reversible_db 与 fork_db不一致
          EOS_ASSERT( objitr->blocknum == head->block_num, fork_database_exception,
                     "reversible block database is inconsistent with fork database, replay blockchain",
                     ("head",head->block_num)("unconfimed", objitr->blocknum)         );
@@ -349,8 +350,8 @@ struct controller_impl {
       db.add_index<transaction_multi_index>();
       db.add_index<generated_transaction_multi_index>();
 
-      authorization.add_indices();
-      resource_limits.add_indices();
+      authorization.add_indices(); // has chainbase in there
+      resource_limits.add_indices(); // has chainbase in there
    }
 
    void clear_all_undo() {
@@ -464,6 +465,7 @@ struct controller_impl {
 
    /**
     * @post regardless of the success of commit block there is no active pending block
+	* @param add_to_fork_db 生产为true，接收为false
     */
    void commit_block( bool add_to_fork_db ) {
       auto reset_pending_on_exit = fc::make_scoped_exit([this]{
@@ -486,6 +488,8 @@ struct controller_impl {
             });
          }
 
+		// net_plugin -> broadcast this block，
+        // producer_plugin -> on_block
          emit( self.accepted_block, pending->_pending_block_state );
       } catch (...) {
          // dont bother resetting pending, instead abort the block
@@ -495,7 +499,7 @@ struct controller_impl {
       }
 
       // push the state for pending.
-      pending->push();
+      pending->push(); //IMPORTANT: set apply<-false in order not to undo session
    }
 
    // The returned scoped_exit should not exceed the lifetime of the pending which existed when make_block_restore_point was called.
@@ -568,6 +572,7 @@ struct controller_impl {
       db.remove( gto );
    }
 
+   //主观的错误，cpu/net溢出，deadline、黑白名单等非trx本身有错误的异常
    bool failure_is_subjective( const fc::exception& e ) const {
       auto code = e.code();
       return    (code == subjective_block_production_exception::code_value)
@@ -759,6 +764,11 @@ struct controller_impl {
     *  This is the entry point for new transactions to the block state. It will check authorization and
     *  determine whether to execute it now or to delay it. Lastly it inserts a transaction receipt into
     *  the pending block.
+    * @param trx with packed_transaction inside
+    * @param deadline
+    * @param implicit
+    * @param billed_cpu_time_us usually 0 but 100 when push onblock trx
+    * @return
     */
    transaction_trace_ptr push_transaction( const transaction_metadata_ptr& trx,
                                            fc::time_point deadline,
@@ -799,7 +809,7 @@ struct controller_impl {
             if( !self.skip_auth_check() && !trx->implicit ) {
                authorization.check_authorization(
                        trx->trx.actions,
-                       trx->recover_keys( chain_id ),
+                       trx->recover_keys( chain_id ), // 从签名中解出公钥
                        {},
                        trx_context.delay,
                        [](){}
@@ -808,7 +818,8 @@ struct controller_impl {
                        false
                );
             }
-            trx_context.exec();
+
+            trx_context.exec(); // trx_context::dispatch_action -> apply_context::exec -> apply_context::exec_one -> wasm_interface::apply -> binaryen::call("apply")
             trx_context.finalize(); // Automatically rounds up network and CPU usage in trace and bills payers if successful
 
             auto restore = make_block_restore_point();
@@ -817,6 +828,7 @@ struct controller_impl {
                transaction_receipt::status_enum s = (trx_context.delay == fc::seconds(0))
                                                     ? transaction_receipt::executed
                                                     : transaction_receipt::delayed;
+               // 非内部tx才写到区块(pending和pending.block)里
                trace->receipt = push_receipt(trx->packed_trx, s, trx_context.billed_cpu_time_us, trace->net_usage);
                pending->_pending_block_state->trxs.emplace_back(trx);
             } else {
@@ -843,9 +855,10 @@ struct controller_impl {
                trx_context.undo();
             } else {
                restore.cancel();
-               trx_context.squash();
+               trx_context.squash(); //exception时会析构trx_context使其内部session析构执行undo()，此方法删除session使其无法被undo
             }
 
+			//IMPORTANT: 如果不是内部trx，则移除unapply中的同名trx，防止重复执行
             if (!trx->implicit) {
                unapplied_transactions.erase( trx->signed_id );
             }
@@ -887,8 +900,12 @@ struct controller_impl {
       pending->_pending_block_state = std::make_shared<block_state>( *head, when ); // promotes pending schedule (if any) to active
       pending->_pending_block_state->in_current_chain = true;
 
+//wlog("超pending_block_state: ${pbs} \n-----------------------------------Pending-------------------------------------", ("pbs", pending->_pending_block_state));
+
+      //IMPORTANT: dpos共识确认块
       pending->_pending_block_state->set_confirmed(confirm_block_count);
 
+      // 是否已经把active_schedule更新为pending_schedule
       auto was_pending_promoted = pending->_pending_block_state->maybe_promote_pending();
 
       //modify state in speculative block only if we are speculative reads mode (other wise we need clean state for head or irreversible reads)
@@ -908,14 +925,16 @@ struct controller_impl {
                         ("lib", pending->_pending_block_state->dpos_irreversible_blocknum)
                         ("schedule", static_cast<producer_schedule_type>(gpo.proposed_schedule) ) );
                }
+			   // 将之前通过系统合约set_new_producers进gpo的schedule放到pending里
                pending->_pending_block_state->set_new_producers( gpo.proposed_schedule );
-               db.modify( gpo, [&]( auto& gp ) {
+               db.modify( gpo, [&]( auto& gp ) { // 清空gpo
                      gp.proposed_schedule_block_num = optional<block_num_type>();
                      gp.proposed_schedule.clear();
                   });
             }
 
          try {
+            // onblock action in eosio.system
             auto onbtrx = std::make_shared<transaction_metadata>( get_on_block_transaction() );
             onbtrx->implicit = true;
             auto reset_in_trx_requiring_checks = fc::make_scoped_exit([old_value=in_trx_requiring_checks,this](){
@@ -936,7 +955,7 @@ struct controller_impl {
          update_producers_authority();
       }
 
-      guard_pending.cancel();
+      guard_pending.cancel(); // 正常退出
    } // start_block
 
 
@@ -946,7 +965,7 @@ struct controller_impl {
 
       p->sign( signer_callback );
 
-      static_cast<signed_block_header&>(*p->block) = p->header;
+      static_cast<signed_block_header&>(*p->block) = p->header; //block <- pending.header
    } /// sign_block
 
    void apply_block( const signed_block_ptr& b, controller::block_status s ) { try {
@@ -1016,7 +1035,7 @@ struct controller_impl {
    } FC_CAPTURE_AND_RETHROW() } /// apply_block
 
 
-   void push_block( const signed_block_ptr& b, controller::block_status s ) {
+   void push_block( const signed_block_ptr& b, controller::block_status s /*default complete*/) {
     //  idump((fc::json::to_pretty_string(*b)));
       EOS_ASSERT(!pending, block_validate_exception, "it is not valid to push a block when there is a pending block");
       try {
@@ -1048,6 +1067,7 @@ struct controller_impl {
    void maybe_switch_forks( controller::block_status s = controller::block_status::complete ) {
       auto new_head = fork_db.head();
 
+      // 本地块是新块的前一个块，就接收一个块apply_block *1
       if( new_head->header.previous == head->id ) {
          try {
             apply_block( new_head->block, s );
@@ -1058,6 +1078,8 @@ struct controller_impl {
             fork_db.set_validity( new_head, false ); // Removes new_head from fork_db index, so no need to mark it as not in the current chain.
             throw;
          }
+
+      // 本地块与新块id不同，就把旧块所在链上的块回滚，然后接收新块所在链上的块
       } else if( new_head->id != head->id ) {
          ilog("switching forks from ${current_head_id} (block number ${current_head_num}) to ${new_head_id} (block number ${new_head_num})",
               ("current_head_id", head->id)("current_head_num", head->block_num)("new_head_id", new_head->id)("new_head_num", new_head->block_num) );
@@ -1080,6 +1102,7 @@ struct controller_impl {
             }
             catch (const fc::exception& e) { except = e; }
             if (except) {
+               // 回滚之前的处理，pop新块，apply旧块
                elog("exception thrown while switching forks ${e}", ("e",except->to_detail_string()));
 
                // ritr currently points to the block that threw
@@ -1591,6 +1614,9 @@ int64_t controller::set_proposed_producers( vector<producer_key> producers ) {
    const auto& gpo = get_global_properties();
    auto cur_block_num = head_block_num() + 1;
 
+   /* start_block在set_new_producers后会置空proposed_schedule_block_num
+    * 在未set前，gp.proposed_schedule_block_num = cur_block_num;
+    */
    if( gpo.proposed_schedule_block_num.valid() ) {
       if( *gpo.proposed_schedule_block_num != cur_block_num )
          return -1; // there is already a proposed schedule set in a previous block, wait for it to become pending
@@ -1605,6 +1631,7 @@ int64_t controller::set_proposed_producers( vector<producer_key> producers ) {
    decltype(sch.producers.cend()) end;
    decltype(end)                  begin;
 
+   // 原producers，有pending取pending（pendind在set_new_producers时设置），没有就取active的
    if( my->pending->_pending_block_state->pending_schedule.producers.size() == 0 ) {
       const auto& active_sch = my->pending->_pending_block_state->active_schedule;
       begin = active_sch.producers.begin();
