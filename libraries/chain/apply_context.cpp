@@ -195,6 +195,8 @@ void apply_context::execute_inline( action&& a ) {
    }
 
    // No need to check authorization if: replaying irreversible blocks; contract is privileged; or, contract is calling itself.
+   // privileged:享有特权的，eosio系统账号执行inline时，跳过eosio.code权限的检测
+   // 见controller::create_native_account( config::system_account_name, system_auth, system_auth, true );
    if( !control.skip_auth_check() && !privileged && a.account != receiver ) {
       control.get_authorization_manager()
              .check_authorization( {a},
