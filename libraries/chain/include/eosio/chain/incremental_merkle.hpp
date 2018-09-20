@@ -35,7 +35,7 @@ constexpr uint64_t next_power_of_2(uint64_t value) {
  * @param value - and integral power-of-2
  * @return the number of leading zeros
  */
-constexpr int clz_power_2(uint64_t value) {
+constexpr int clz_power_2(uint64_t value) { //log2(value)
    int lz = 64;
 
    if (value) lz--;

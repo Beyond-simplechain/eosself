@@ -443,6 +443,7 @@ struct controller_impl {
       resource_limits.initialize_database();
 
       authority system_auth(conf.genesis.initial_key);
+      //自动创建eosio账号，privilege为true
       create_native_account( config::system_account_name, system_auth, system_auth, true );
 
       auto empty_authority = authority(1, {}, {});
