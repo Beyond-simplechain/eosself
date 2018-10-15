@@ -18,7 +18,7 @@ namespace eosio { namespace chain {
        *  behavior. When producing a block a producer is always confirming at least the block he
        *  is building off of.  A producer cannot confirm "this" block, only prior blocks.
        */
-      uint16_t                         confirmed = 1;  
+      uint16_t                         confirmed = 1; /// 该块的生产者确认的块数
 
       block_id_type                    previous;
 

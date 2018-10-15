@@ -43,19 +43,30 @@ void print_hash(uint64_t hash[4], string desc = "hash") {
 int main() {
 	cout << "test-main" << endl;
 
-	cout << fc::sha256::hash<int>(2).str() << endl;
+//	cout << fc::sha256::hash<int>(2).str() << endl;
+//
+//	print_hash(fc::sha256::hash<int>(2)._hash, "int");
+//
+//	print_hash(fc::sha256::hash<string>("encode")._hash, "string");
+//
+//	print_hash(fc::sha256::hash<vector<int>>({1,0,0,8,6})._hash, "vector");
+//
+//	print_hash(fc::sha256::hash<map<int,int>>({{1,1},{2,3}})._hash, "map");
 
-	print_hash(fc::sha256::hash<int>(2)._hash, "int");
+//   int arr[4] = {1,2,3,4};
+   int arr = 1;
+//   uint8_t arr[4] = {'1','2','3','4'};
 
-	print_hash(fc::sha256::hash<string>("encode")._hash, "string");
+   fc::array<char,3> fcarr;
+   fcarr.data[0] = '1';
+   fcarr.data[1] = '1';
+   fcarr.data[2] = '1';
 
-	print_hash(fc::sha256::hash<vector<int>>({1,0,0,8,6})._hash, "vector");
+//	print_hash(fc::sha256::hash(arr)._hash, "array");
+//	print_hash(fc::sha256::hash(fcarr)._hash, "array");
+	print_hash(fc::sha256::hash(fc::sha256::hash(arr))._hash, "array");
 
-	print_hash(fc::sha256::hash<map<int,int>>({{1,1},{2,3}})._hash, "map");
-
-	print_hash(fc::sha256::hash<int[4]>({1,2,3,4})._hash, "array");
-
-	print_hash(fc::sha256::hash<FFS>(ff)._hash, "struct");
+	/*print_hash(fc::sha256::hash<FFS>(ff)._hash, "struct");
 
 	print_hash(fc::sha256::hash(make_pair(make_pair(1,"a"), make_pair<int, vector<char>>(2, {'x','y'})))._hash, "pair");
    uint64_t hash[4] = {0,0,0,0};
@@ -94,7 +105,7 @@ int main() {
 	cout << dec << sizeof(hash) << " " << sizeof(hash[0]) << " " << sizeof(hash)/sizeof(hash[0])  << endl;
 	memcpy(sha._hash, hash, sizeof(hash));
 
-	print_hash(fc::sha256::hash(sha)._hash, "sha");
+	print_hash(fc::sha256::hash(sha)._hash, "sha");*/
 
 
 //	fc::raw::pack(enc, false);

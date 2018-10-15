@@ -69,7 +69,7 @@ if(BUILD_MONGO_DB_PLUGIN)
   target_link_libraries( ${NODE_EXECUTABLE_NAME} PRIVATE -Wl,${whole_archive_flag} mongo_db_plugin -Wl,${no_whole_archive_flag} )
 endif()
 
-include(additionalPlugins)
+include(additionalPlugins) # 包含了{Project}/CMakeModules/additionalPlugins.cmake文件
 
 install( TARGETS
    ${NODE_EXECUTABLE_NAME}

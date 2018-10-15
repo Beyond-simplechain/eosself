@@ -23,7 +23,7 @@ struct block_header_state {
     flat_map<account_name,uint32_t>   producer_to_last_produced;
     flat_map<account_name,uint32_t>   producer_to_last_implied_irb;
     public_key_type                   block_signing_key;
-    vector<uint8_t>                   confirm_count;
+    vector<uint8_t>                   confirm_count; /// [1,1,1,1,2,2,2,2,2,3,3,...,15]
     vector<header_confirmation>       confirmations;
 
     block_header_state   next( const signed_block_header& h, bool trust = false )const;
