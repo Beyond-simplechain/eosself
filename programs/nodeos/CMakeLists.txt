@@ -71,6 +71,7 @@ endif()
 
 include(additionalPlugins) # 包含了{Project}/CMakeModules/additionalPlugins.cmake文件
 
+copy_bin( ${NODE_EXECUTABLE_NAME} )
 install( TARGETS
    ${NODE_EXECUTABLE_NAME}
 
