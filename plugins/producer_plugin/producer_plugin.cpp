@@ -1024,6 +1024,10 @@ producer_plugin_impl::start_block_result producer_plugin_impl::start_block(bool 
 
       chain.abort_block();
       chain.start_block(block_time, blocks_to_confirm);
+for (int i=0; i<10; i++) {
+   sleep(1);
+   std::cerr << "-----------producer->start_block---------------" << std::endl;
+}
    } FC_LOG_AND_DROP();
 
    const auto& pbs = chain.pending_block_state();
@@ -1270,9 +1274,9 @@ producer_plugin_impl::start_block_result producer_plugin_impl::start_block(bool 
 }
 
 /**
- * plugin_startup -> schedule_production_loop
- * on_incoming_block -> schedule_production_loop
- * schedule_production_loop -> schedule_production_loop *3 at（failed, after producer, wake)
+ * plugin_startup --> schedule_production_loop
+ * on_incoming_block --> schedule_production_loop
+ * schedule_production_loop --> schedule_production_loop x3 at（failed, after produce, wakeup)
  */
 void producer_plugin_impl::schedule_production_loop() {
    chain::controller& chain = app().get_plugin<chain_plugin>().chain();

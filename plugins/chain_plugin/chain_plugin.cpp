@@ -1413,6 +1413,12 @@ fc::variant read_only::get_block(const read_only::get_block_params& params) cons
 
    uint32_t ref_block_prefix = block->id()._hash[1];
 
+
+//   for (int i=0; i<10; i++) {
+      std::cerr << "-------http-> get_block-------" << std::endl;
+//      sleep(2);
+//   };
+
    return fc::mutable_variant_object(pretty_output.get_object())
            ("id", block->id())
            ("block_num",block->block_num())
