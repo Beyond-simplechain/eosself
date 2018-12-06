@@ -1093,10 +1093,10 @@ producer_plugin_impl::start_block_result producer_plugin_impl::start_block(bool 
 
       chain.abort_block();
       chain.start_block(block_time, blocks_to_confirm);
-for (int i=0; i<10; i++) {
-   sleep(1);
-   std::cerr << "-----------producer->start_block---------------" << std::endl;
-}
+//for (int i=0; i<5; i++) {
+//   sleep(1);
+//   std::cerr << "-----------producer->start_block---------------" << std::endl;
+//}
    } FC_LOG_AND_DROP();
 
    const auto& pbs = chain.pending_block_state();

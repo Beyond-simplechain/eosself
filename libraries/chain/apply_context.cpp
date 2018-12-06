@@ -66,6 +66,9 @@ void apply_context::exec_one( action_trace& trace )
                control.check_action_list( act.account, act.name );
             }
             try {
+					std::hash<std::string> hasher;
+					std::string s = "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce";
+					std::cout <<  "get_wasm_interface, " << hasher(s) << std::endl;
                control.get_wasm_interface().apply( a.code_version, a.code, *this );
             } catch( const wasm_exit& ) {}
          }

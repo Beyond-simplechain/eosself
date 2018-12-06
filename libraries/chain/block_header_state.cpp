@@ -228,6 +228,8 @@ namespace eosio { namespace chain {
 
   void block_header_state::sign( const std::function<signature_type(const digest_type&)>& signer ) {
      auto d = sig_digest();
+     std::cout << "*************" << std::endl;
+	  std::cout << d.str() << std::endl;
      header.producer_signature = signer( d );
      EOS_ASSERT( block_signing_key == fc::crypto::public_key( header.producer_signature, d ), wrong_signing_key, "block is signed with unexpected key" );
   }
