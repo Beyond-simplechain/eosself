@@ -1360,7 +1360,7 @@ struct controller_impl {
    void maybe_switch_forks( controller::block_status s ) {
       auto new_head = fork_db.head();
 
-      // 本地块是新块的前一个块，就接收一个块apply_block *1
+      // (forkdb'head已变化)本地块是新forkdb'head的前一个块，就apply一个块更新到当前链(control'head)
       if( new_head->header.previous == head->id ) {
          try {
             apply_block( new_head->block, s );
@@ -1372,7 +1372,7 @@ struct controller_impl {
             throw;
          }
 
-      // 本地块与新块id不同，就把旧块所在链上的块回滚，然后接收新块所在链上的块
+      // 否则，forkdb'head已变化，但又不是当前链的下一块，就需要切到新forkdb'head所在的链上
       } else if( new_head->id != head->id ) {
          ilog("switching forks from ${current_head_id} (block number ${current_head_num}) to ${new_head_id} (block number ${new_head_num})",
               ("current_head_id", head->id)("current_head_num", head->block_num)("new_head_id", new_head->id)("new_head_num", new_head->block_num) );

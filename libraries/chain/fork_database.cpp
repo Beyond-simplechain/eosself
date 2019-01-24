@@ -137,12 +137,13 @@ namespace eosio { namespace chain {
       auto inserted = my->index.insert(n);
       EOS_ASSERT( inserted.second, fork_database_exception, "duplicate block added?" );
 
+      // by_lib_block_num由<dpos,bft,num>从大到小排列，head始终为最长链的最大块
       my->head = *my->index.get<by_lib_block_num>().begin();
 
       auto lib    = my->head->dpos_irreversible_blocknum;
       auto oldest = *my->index.get<by_block_num>().begin();
 
-      // 删除不可撤销之前的所有块
+      // 递归删除不可撤销的所有块
       if( oldest->block_num < lib ) {
          prune( oldest );
       }
@@ -173,6 +174,8 @@ namespace eosio { namespace chain {
    /**
     *  Given two head blocks, return two branches of the fork graph that
     *  end with a common ancestor (same prior block)
+    *  找出新链first和旧链second的分叉起始块Blk，
+    *  将新链在Blk后的块保存到first_branch，旧链保存到second_branch
     */
    pair< branch_type, branch_type >  fork_database::fetch_branch_from( const block_id_type& first,
                                                                        const block_id_type& second )const {

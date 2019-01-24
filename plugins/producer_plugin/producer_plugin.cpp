@@ -241,6 +241,7 @@ class producer_plugin_impl : public std::enable_shared_from_this<producer_plugin
                   new_producers.insert(p.producer_name);
             }
 
+            // 只更新新加入的生产者的watermark
             for( const auto& p: bsp->active_schedule.producers) {
                new_producers.erase(p.producer_name);
             }
@@ -372,6 +373,7 @@ class producer_plugin_impl : public std::enable_shared_from_this<producer_plugin
       void process_incoming_transaction_async(const transaction_metadata_ptr& trx, bool persist_until_expired, next_function<transaction_trace_ptr> next) {
          chain::controller& chain = chain_plug->chain();
          if (!chain.pending_block_state()) {
+            // 我不在生产。将收到的tx暂存至_pending_incoming_transactions
             _pending_incoming_transactions.emplace_back(trx, persist_until_expired, next);
             return;
          }
@@ -433,6 +435,7 @@ class producer_plugin_impl : public std::enable_shared_from_this<producer_plugin
             auto trace = chain.push_transaction(trx, deadline);
             if (trace->except) {
                if (failure_is_subjective(*trace->except, deadline_is_subjective)) {
+               	//主观错误(块资源耗尽)，暂存到_pending_incoming_transactions，在下次start_block中执行
                   _pending_incoming_transactions.emplace_back(trx, persist_until_expired, next);
                   if (_pending_block_mode == pending_block_mode::producing) {
                      fc_dlog(_trx_trace_log, "[TRX_TRACE] Block ${block_num} for producer ${prod} COULD NOT FIT, tx: ${txid} RETRYING ",
@@ -448,16 +451,18 @@ class producer_plugin_impl : public std::enable_shared_from_this<producer_plugin
                   send_response(e_ptr);
                }
             } else {
+               // persist_until_expired: 当http接收时为true，net接收时false
                if (persist_until_expired) {
                   // if this trx didnt fail/soft-fail and the persist flag is set, store its ID so that we can
                   // ensure its applied to all future speculative blocks as well.
-                  // 没有失败就把trx持久化下来。
+                  // 只持久化没有失败的http发送的tx。
                   _persistent_transactions.insert(transaction_id_with_expiry{trx->id, trx->packed_trx->expiration()});
                }
                send_response(trace);
             }
 
          } catch ( const guard_exception& e ) {
+            // db问题直接中断程序
             chain_plug->handle_guard_exception(e);
          } catch ( boost::interprocess::bad_alloc& ) {
             chain_plugin::handle_db_exhaustion();
@@ -1015,21 +1020,25 @@ optional<fc::time_point> producer_plugin_impl::calculate_next_block_time(const a
    }
 
    // this producers next opportuity to produce is the next time its slot arrives after or at the calculated minimum
+   // minimum_slot下个块生产的时间
    uint32_t minimum_slot = current_block_time.slot + minimum_offset;
+   // minimum_slot_producer_index,minimum_slot块时间点是哪个生产者
    size_t minimum_slot_producer_index = (minimum_slot % (active_schedule.size() * config::producer_repetitions)) / config::producer_repetitions;
-   if ( producer_index == minimum_slot_producer_index ) { // 我就是这个最小时间的生产者，直接等待minimum_slot
+   if ( producer_index == minimum_slot_producer_index ) { // 我就是这个时间的生产者，直接等待minimum_slot
       // this is the producer for the minimum slot, go with that
       return block_timestamp_type(minimum_slot).to_time_point();
    } else {
       // calculate how many rounds are between the minimum producer and the producer in question
+      // minimum_slot时间点的生产者到我距离多少
       size_t producer_distance = producer_index - minimum_slot_producer_index;
       // check for unsigned underflow
+      // minimum_slot_producer_index > producer_index, 则至少要再等一轮
       if (producer_distance > producer_index) {
          producer_distance += active_schedule.size();
       }
 
       // align the minimum slot to the first of its set of reps
-      // 找到该生产者生产此轮生产第一个块的时间
+      // 找到minimum_slot时间点的生产者那轮生产第一个块的时间点
       uint32_t first_minimum_producer_slot = minimum_slot - (minimum_slot % config::producer_repetitions);
 
       // offset the aligned minimum to the *earliest* next set of slots for this producer
@@ -1166,6 +1175,7 @@ producer_plugin_impl::start_block_result producer_plugin_impl::start_block() {
          int num_expired_persistent = 0;
          int orig_count = _persistent_transactions.size();
 
+         // 删除persisted_tx中过期的交易
          while(!persisted_by_expiry.empty() && persisted_by_expiry.begin()->expiry <= pbs->header.timestamp.to_time_point()) {
             auto const& txid = persisted_by_expiry.begin()->trx_id;
             if (_pending_block_mode == pending_block_mode::producing) {
@@ -1214,6 +1224,7 @@ producer_plugin_impl::start_block_result producer_plugin_impl::start_block() {
 
                for (auto& trx: unapplied_trxs) {
                   auto category = calculate_transaction_category(trx);
+                  // tx过期，或非生产者不再执行非持久化的tx
                   if (category == tx_category::EXPIRED || (category == tx_category::UNEXPIRED_UNPERSISTED && _producers.empty())) {
                      if (!_producers.empty()) {
                         fc_dlog(_trx_trace_log, "[TRX_TRACE] Node with producers configured is dropping an EXPIRED transaction that was PREVIOUSLY ACCEPTED : ${txid}",
@@ -1291,6 +1302,7 @@ producer_plugin_impl::start_block_result producer_plugin_impl::start_block() {
                       ("expired", num_expired));
             }
 
+            // 从gto中获取scheduled_tx执行
             auto scheduled_trxs = chain.get_scheduled_transactions();
             if (!scheduled_trxs.empty()) {
                int num_applied = 0;

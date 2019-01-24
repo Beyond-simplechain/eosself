@@ -202,6 +202,7 @@ namespace eosio { namespace chain {
                    ("expected", (b->block_num() - my->first_block_num) * sizeof(uint64_t)));
          auto data = fc::raw::pack(*b);
          my->block_stream.write(data.data(), data.size());
+         // 后8位记录此块数据开始位置
          my->block_stream.write((char*)&pos, sizeof(pos));
          my->index_stream.write((char*)&pos, sizeof(pos));
          my->head = b;
@@ -309,6 +310,7 @@ namespace eosio { namespace chain {
       if (my->block_stream.tellg() <= sizeof(pos))
          return {};
 
+      // 文件末尾后8位记录head块的位置
       my->block_stream.seekg(-sizeof(pos), std::ios::end);
       my->block_stream.read((char*)&pos, sizeof(pos));
       if (pos != npos) {
