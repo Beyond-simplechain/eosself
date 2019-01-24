@@ -44,6 +44,11 @@ digest_type merkle(vector<digest_type> ids) {
       }
 
       ids.resize(ids.size() / 2);
+      for (auto itr = ids.begin(); itr != ids.end(); ++itr) {
+          std::cout << itr->str() << " ";
+      } 
+
+      std::cout << std::endl;
    }
 
    return ids.front();

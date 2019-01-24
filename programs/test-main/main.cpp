@@ -3,6 +3,9 @@
 //
 
 #include <iostream>
+#include <vector>
+#include <set>
+
 #include <fc/container/flat_fwd.hpp>
 #include <fc/io/varint.hpp>
 #include <fc/io/enum_type.hpp>
@@ -21,6 +24,9 @@
 #include <eosio/chain/block_header_state.hpp>
 #include <eosio/chain/producer_schedule.hpp>
 #include <eosio/chain/types.hpp>
+#include <eosio/chain/controller.hpp>
+#include <eosio/chain/incremental_merkle.hpp>
+#include <eosio/chain/merkle.hpp>
 
 #include <exception>
 
@@ -48,7 +54,7 @@ void print_hash(uint64_t hash[4], string desc = "hash") {
 }
 
 void block_header_state_digest() {
-	auto pbk = public_key_type(std::string("EOS859gxfnXyUriMgUeThh1fWv3oqcpLFyHa3TfFYC4PK2HqhToVM") );
+	auto pbk = public_key_type(std::string("EOS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV") );
 
 	vector<producer_key> pks;
 	pks.push_back(producer_key{N(eosio), pbk});
@@ -70,24 +76,84 @@ void block_header_state_digest() {
 	cout << bhs.sig_digest().str() << endl;
 }
 
+void mercle_get_root() {
+	incremental_merkle m;
+	m.append(fc::sha256("00000043df9347b6d053a03a78499bc420acb05c5c3bec6acbd8d37a68b3f195"));
+	m.append(fc::sha256("00000042332b70edb826b578924218b8b509c3dcb2011608829f9f5f85d983b0"));
+
+	cout << m.get_root().str() << endl;
+}
+
+void mercle() {
+	vector<digest_type> ids = {fc::sha256("00000043df9347b6d053a03a78499bc420acb05c5c3bec6acbd8d37a68b3f195"),
+	fc::sha256("00000042332b70edb826b578924218b8b509c3dcb2011608829f9f5f85d983b0")};
+
+	cout << eosio::chain::merkle(ids).str() << endl;
+}
+
+void print_ids(vector<digest_type> ids) {
+	cout << "[";
+	for (auto id : ids) {
+		cout << id.str() << " ";
+	}
+	cout << "]" << endl;
+}
+void mercle_active_node() {
+	incremental_merkle m;
+	m.append(fc::sha256("00000043df9347b6d053a03a78499bc420acb05c5c3bec6acbd8d37a68b3f195"));
+	print_ids(m._active_nodes);
+	m.append(fc::sha256("00000042332b70edb826b578924218b8b509c3dcb2011608829f9f5f85d983b0"));
+	print_ids(m._active_nodes);
+	m.append(fc::sha256("0000002033c7b70cdeadd2e71aa0f4adf38579904656754d3f4d14b68444bc08"));
+	print_ids(m._active_nodes);
+	m.append(fc::sha256("00000030cf4390afd0b1755c166a83ac3c49a9c017ffb1c5ffb41df2e03e614b"));
+	print_ids(m._active_nodes);
+}
+
+int main() {
+	// mercle_get_root();
+	using eosio::chain::detail::calcluate_max_depth;
+	// cout << calcluate_max_depth(0) << endl;
+	// cout << calcluate_max_depth(1) << endl;
+	// cout << calcluate_max_depth(2) << endl;
+	// cout << calcluate_max_depth(3) << endl;
+	// mercle();
+	mercle_active_node();
+}
 //namespace std {
 //	 typedef unsigned int size_t;
 //}
 
 //extern "C" {
-int main() {
+int main0() {
 
-	block_header_state_digest();
+//	std::set<int> setint;
+//	setint.lower_bound()
+//	controller::config cfg;
+//	controller c1(cfg);
+//	c1.startup([](){ return false; });
+//
+////	controller c2(cfg);
+////	c2.startup([](){ return true; });
+//
+//	fc::static_variant<FFS, int> trx;
+//	trx = FFS{};
+
+
+//	block_header_state_digest();
 
 	string msg = "rethrow msg";
 
+try {
 	try {
 		try {
 			EOS_ASSERT(false, block_net_usage_exceeded, "exception ${what}", ("what", 1));
 		} FC_CAPTURE_AND_RETHROW((msg))
-	} catch (fc::exception& e) {
-		cerr << e.to_detail_string() << endl;
+	} catch (fc::exception &e) {
+		edump((e.to_detail_string()));
+		throw e;
 	}
+} FC_LOG_AND_DROP()
 
 //	try {
 //		assert(false);

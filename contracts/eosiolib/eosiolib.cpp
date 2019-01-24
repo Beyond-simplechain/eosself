@@ -127,7 +127,7 @@ namespace eosio {
          if (_heaps_actual_size == 0)
             _heaps_actual_size = _heaps_size;
 
-         adjust_to_mem_block(size);
+         adjust_to_mem_block(size); //对齐为8的倍数
 
          // first pass of loop never has to initialize the slot in _available_heap
          char* buffer = nullptr;

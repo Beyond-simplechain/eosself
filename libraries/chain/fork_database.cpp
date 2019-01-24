@@ -122,7 +122,8 @@ namespace eosio { namespace chain {
          my->head =  s;
       }
    }
-
+    
+   /// add_block_state 
    block_state_ptr fork_database::add( const block_state_ptr& n, bool skip_validate_previous ) {
       EOS_ASSERT( n, fork_database_exception, "attempt to add null block state" );
       EOS_ASSERT( my->head, fork_db_block_not_found, "no head block set" );
@@ -141,6 +142,7 @@ namespace eosio { namespace chain {
       auto lib    = my->head->dpos_irreversible_blocknum;
       auto oldest = *my->index.get<by_block_num>().begin();
 
+      // 删除不可撤销之前的所有块
       if( oldest->block_num < lib ) {
          prune( oldest );
       }
@@ -148,6 +150,7 @@ namespace eosio { namespace chain {
       return n;
    }
 
+   /// add_signed_block
    block_state_ptr fork_database::add( signed_block_ptr b, bool skip_validate_signee ) {
       EOS_ASSERT( b, fork_database_exception, "attempt to add null block" );
       EOS_ASSERT( my->head, fork_db_block_not_found, "no head block set" );
@@ -159,9 +162,10 @@ namespace eosio { namespace chain {
       auto prior = by_id_idx.find( b->previous );
       EOS_ASSERT( prior != by_id_idx.end(), unlinkable_block_exception, "unlinkable block", ("id", string(b->id()))("previous", string(b->previous)) );
 
+      // 通过prev块创建新的block_state
       auto result = std::make_shared<block_state>( **prior, move(b), skip_validate_signee );
       EOS_ASSERT( result, fork_database_exception , "fail to add new block state" );
-      return add(result, true);
+      return add(result, true);/// add_block_state
    }
 
    const block_state_ptr& fork_database::head()const { return my->head; }
@@ -176,6 +180,7 @@ namespace eosio { namespace chain {
       auto first_branch = get_block(first);
       auto second_branch = get_block(second);
 
+      // 使两条链前移至同一高度
       while( first_branch->block_num > second_branch->block_num )
       {
          result.first.push_back(first_branch);
@@ -190,6 +195,7 @@ namespace eosio { namespace chain {
          EOS_ASSERT( second_branch, fork_db_block_not_found, "block ${id} does not exist", ("id", string(second_branch->header.previous)) );
       }
 
+      // 此时(同一高度)，若两条链的prev块仍不同，则继续前移，直到prev块相同即为分叉点
       while( first_branch->header.previous != second_branch->header.previous )
       {
          result.first.push_back(first_branch);
@@ -214,10 +220,12 @@ namespace eosio { namespace chain {
       vector<block_id_type> remove_queue{id};
 
       for( uint32_t i = 0; i < remove_queue.size(); ++i ) {
+         // 删除id块
          auto itr = my->index.find( remove_queue[i] );
          if( itr != my->index.end() )
             my->index.erase(itr);
 
+        // 删除prev块为id的块
          auto& previdx = my->index.get<by_prev>();
          auto  previtr = previdx.lower_bound(remove_queue[i]);
          while( previtr != previdx.end() && (*previtr)->header.previous == remove_queue[i] ) {
@@ -256,6 +264,7 @@ namespace eosio { namespace chain {
 
       auto& by_bn = my->index.get<by_block_num>();
       auto bni = by_bn.begin();
+      // 递归删除h之前的所有块
       while( bni != by_bn.end() && (*bni)->block_num < num ) {
          prune( *bni );
          bni = by_bn.begin();
@@ -263,10 +272,12 @@ namespace eosio { namespace chain {
 
       auto itr = my->index.find( h->id );
       if( itr != my->index.end() ) {
+         // 此块不可撤销，从reversible中删除，插入到blog
          irreversible(*itr);
          my->index.erase(itr);
       }
 
+      // 删除所有高度为h.num的块
       auto& numidx = my->index.get<by_block_num>();
       auto nitr = numidx.lower_bound( num );
       while( nitr != numidx.end() && (*nitr)->block_num == num ) {
